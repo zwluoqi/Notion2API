@@ -222,15 +222,15 @@ func defaultConfig() AppConfig {
 			AutoSwitch:       true,
 		},
 		Features: FeatureConfig{
-			UseWebSearch:               true,
+			UseWebSearch:               false,
 			UseReadOnlyMode:            true,
 			ForceDisableUpstreamEdits:  true,
 			WriterMode:                 false,
-			EnableGenerateImage:        true,
+			EnableGenerateImage:        false,
 			EnableCsvAttachmentSupport: true,
 			AISurface:                  "ai_module",
 			ThreadType:                 "workflow",
-			SearchScopes:               []string{"everything"},
+			SearchScopes:               []string{},
 		},
 		Accounts:     []NotionAccount{},
 		ModelAliases: map[string]string{},
@@ -312,9 +312,7 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	if cfg.SessionRefresh.IntervalSec <= 0 {
 		cfg.SessionRefresh.IntervalSec = 900
 	}
-	if len(cfg.Features.SearchScopes) == 0 {
-		cfg.Features.SearchScopes = []string{"everything"}
-	}
+	cfg.Features.SearchScopes = normalizeStringList(cfg.Features.SearchScopes)
 	cfg.Features.AISurface = strings.TrimSpace(cfg.Features.AISurface)
 	if cfg.Features.AISurface == "" {
 		cfg.Features.AISurface = "ai_module"

@@ -291,6 +291,17 @@ type ndjsonTranscriptState struct {
 	patchValueCounts map[string]int
 }
 
+func (s *ndjsonTranscriptState) hasTerminalAnswer() bool {
+	if !s.FinalAgent.Completed {
+		return false
+	}
+	return strings.TrimSpace(s.FinalAgent.Text) != ""
+}
+
+func (s *ndjsonTranscriptState) hasVisibleAnswer() bool {
+	return strings.TrimSpace(firstNonEmpty(s.FinalAgent.Text, s.EmittedText)) != ""
+}
+
 type continuationTurnDraft struct {
 	SessionID              string
 	ConfigID               string
@@ -900,9 +911,6 @@ func isoNowMillis() string {
 
 func (c *NotionAIClient) buildSearchScopes() []map[string]any {
 	scopes := c.Config.Features.SearchScopes
-	if len(scopes) == 0 {
-		scopes = []string{"everything"}
-	}
 	out := make([]map[string]any, 0, len(scopes))
 	for _, scope := range scopes {
 		clean := strings.TrimSpace(scope)
@@ -911,41 +919,45 @@ func (c *NotionAIClient) buildSearchScopes() []map[string]any {
 		}
 		out = append(out, map[string]any{"type": clean})
 	}
-	if len(out) == 0 {
-		out = append(out, map[string]any{"type": "everything"})
-	}
 	return out
 }
 
 func (c *NotionAIClient) buildDefaultWorkflowConfigValue(threadType string, useWebSearch bool, notionModel string) map[string]any {
 	readOnly := c.Config.Features.UseReadOnlyMode || c.Config.Features.ForceDisableUpstreamEdits
 	enableUpstreamEdits := !c.Config.Features.ForceDisableUpstreamEdits && !readOnly
+	searchScopes := []map[string]any{}
+	if useWebSearch {
+		searchScopes = c.buildSearchScopes()
+		if len(searchScopes) == 0 {
+			searchScopes = []map[string]any{{"type": "everything"}}
+		}
+	}
 	configValue := map[string]any{
 		"type":                                           threadType,
-		"enableAgentAutomations":                         true,
-		"enableAgentIntegrations":                        true,
-		"enableCustomAgents":                             true,
+		"enableAgentAutomations":                         false,
+		"enableAgentIntegrations":                        false,
+		"enableCustomAgents":                             false,
 		"enableExperimentalIntegrations":                 false,
 		"enableAgentViewNotificationsTool":               false,
-		"enableAgentDiffs":                               true,
+		"enableAgentDiffs":                               false,
 		"enableAgentUpdatePagePatch":                     enableUpstreamEdits,
-		"enableAgentCreateDbTemplate":                    true,
+		"enableAgentCreateDbTemplate":                    false,
 		"enableCsvAttachmentSupport":                     c.Config.Features.EnableCsvAttachmentSupport,
-		"enableDatabaseAgents":                           true,
+		"enableDatabaseAgents":                           false,
 		"enableAgentThreadTools":                         false,
 		"enableRunAgentTool":                             false,
 		"enableCrdtOperations":                           false,
-		"enableAgentCardCustomization":                   true,
+		"enableAgentCardCustomization":                   false,
 		"enableSystemPromptAsPage":                       false,
 		"enableUserSessionContext":                       false,
 		"enableScriptAgentAdvanced":                      false,
-		"enableScriptAgent":                              true,
+		"enableScriptAgent":                              false,
 		"enableScriptAgentSearchConnectorsInCustomAgent": false,
 		"enableScriptAgentGoogleDriveInCustomAgent":      false,
-		"enableScriptAgentSlack":                         true,
+		"enableScriptAgentSlack":                         false,
 		"enableScriptAgentMcpServers":                    false,
-		"enableScriptAgentMail":                          true,
-		"enableScriptAgentCalendar":                      true,
+		"enableScriptAgentMail":                          false,
+		"enableScriptAgentCalendar":                      false,
 		"enableScriptAgentCustomAgentTools":              false,
 		"enableScriptAgentCustomToolCalling":             false,
 		"enableCreateAndRunThread":                       true,
@@ -954,12 +966,12 @@ func (c *NotionAIClient) buildDefaultWorkflowConfigValue(threadType string, useW
 		"enableSpeculativeSearch":                        false,
 		"enableQueryCalendar":                            false,
 		"enableQueryMail":                                false,
-		"enableMailExplicitToolCalls":                    true,
+		"enableMailExplicitToolCalls":                    false,
 		"enableMailAgentMultiProviderSupport":            false,
-		"useRulePrioritization":                          true,
+		"useRulePrioritization":                          false,
 		"availableConnectors":                            []any{},
 		"customConnectorInfo":                            []any{},
-		"searchScopes":                                   c.buildSearchScopes(),
+		"searchScopes":                                   searchScopes,
 		"useSearchToolV2":                                false,
 		"useWebSearch":                                   useWebSearch,
 		"useReadOnlyMode":                                readOnly,
@@ -1471,6 +1483,21 @@ func patchEntryKeyFromRest(stepIndex int, rest string, field string) (string, bo
 	return fmt.Sprintf("/s/%d%s", stepIndex, entryPath), true
 }
 
+func parsePatchValueRemovalIndex(rest string) (int, bool) {
+	if !strings.HasPrefix(rest, "/value/") {
+		return 0, false
+	}
+	tail := strings.TrimPrefix(rest, "/value/")
+	if tail == "" || strings.Contains(tail, "/") {
+		return 0, false
+	}
+	index, err := strconv.Atoi(tail)
+	if err != nil || index < 0 {
+		return 0, false
+	}
+	return index, true
+}
+
 func (s *ndjsonTranscriptState) composeStepAgentContent(stepIndex int) (string, bool, string, bool) {
 	s.ensurePatchMaps()
 	statePrefix := patchStatePrefix(stepIndex)
@@ -1590,6 +1617,38 @@ func (s *ndjsonTranscriptState) registerPatchValueAppend(path string, rawValue a
 	if content := extractAssistantPartContent(part); strings.TrimSpace(content) != "" {
 		s.patchValueText[entryKey] = mergeCumulativeAgentContent(s.patchValueText[entryKey], content)
 	}
+}
+
+func (s *ndjsonTranscriptState) removePatchValueEntry(stepIndex int, valueIndex int) {
+	if valueIndex < 0 {
+		return
+	}
+	s.ensurePatchMaps()
+	statePrefix := patchStatePrefix(stepIndex)
+	count := s.patchValueCounts[statePrefix]
+	if count <= 0 || valueIndex >= count {
+		return
+	}
+	for idx := valueIndex; idx < count-1; idx++ {
+		currentKey := patchStateEntryKey(statePrefix, idx)
+		nextKey := patchStateEntryKey(statePrefix, idx+1)
+		nextType, hasNextType := s.patchValueTypes[nextKey]
+		nextText, hasNextText := s.patchValueText[nextKey]
+		if hasNextType {
+			s.patchValueTypes[currentKey] = nextType
+		} else {
+			delete(s.patchValueTypes, currentKey)
+		}
+		if hasNextText {
+			s.patchValueText[currentKey] = nextText
+		} else {
+			delete(s.patchValueText, currentKey)
+		}
+	}
+	lastKey := patchStateEntryKey(statePrefix, count-1)
+	delete(s.patchValueTypes, lastKey)
+	delete(s.patchValueText, lastKey)
+	s.patchValueCounts[statePrefix] = count - 1
 }
 
 func (s *ndjsonTranscriptState) patchEntryType(stepIndex int, rest string) string {
@@ -1907,6 +1966,19 @@ func (s *ndjsonTranscriptState) applyPatchOperation(op ndjsonPatchOperation, sin
 		if handled, err := s.applyAgentPatchField(index, rest, op.O, op.V, sink); handled {
 			return err
 		}
+	case "r":
+		index, rest, ok := parsePatchStepIndex(op.P)
+		if !ok || index < 0 || index >= len(s.Steps) {
+			return nil
+		}
+		if s.Steps[index].Type != "agent-inference" {
+			return nil
+		}
+		if valueIndex, ok := parsePatchValueRemovalIndex(rest); ok {
+			s.ActiveAgentIndex = index
+			s.removePatchValueEntry(index, valueIndex)
+			return s.refreshAgentStepFromPatchState(index, sink)
+		}
 	}
 	return nil
 }
@@ -1979,6 +2051,9 @@ func consumeNDJSONStream(reader io.Reader, threadID string, sink InferenceStream
 			if handleErr := state.handleLine(line, threadID, sink); handleErr != nil {
 				return state.result(), handleErr
 			}
+			if state.hasTerminalAnswer() {
+				return state.result(), nil
+			}
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -1988,6 +2063,93 @@ func consumeNDJSONStream(reader io.Reader, threadID string, sink InferenceStream
 		}
 	}
 	return state.result(), nil
+}
+
+var ndjsonIdleAfterAnswerTimeout = 5 * time.Second
+
+type ndjsonReadEvent struct {
+	line []byte
+	err  error
+}
+
+func consumeNDJSONStreamWithIdleClose(reader io.ReadCloser, threadID string, sink InferenceStreamSink, idleAfterAnswer time.Duration) (ndjsonParseResult, error) {
+	state := &ndjsonTranscriptState{ActiveAgentIndex: -1}
+	buffered := bufio.NewReader(reader)
+	events := make(chan ndjsonReadEvent, 1)
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		for {
+			line, err := buffered.ReadBytes('\n')
+			select {
+			case events <- ndjsonReadEvent{line: line, err: err}:
+			case <-done:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	var idleTimer *time.Timer
+	var idleC <-chan time.Time
+	stopIdleTimer := func() {
+		if idleTimer == nil {
+			return
+		}
+		if !idleTimer.Stop() {
+			select {
+			case <-idleTimer.C:
+			default:
+			}
+		}
+		idleC = nil
+	}
+	resetIdleTimer := func() {
+		if idleAfterAnswer <= 0 || !state.hasVisibleAnswer() || state.hasTerminalAnswer() {
+			return
+		}
+		if idleTimer == nil {
+			idleTimer = time.NewTimer(idleAfterAnswer)
+			idleC = idleTimer.C
+			return
+		}
+		if !idleTimer.Stop() {
+			select {
+			case <-idleTimer.C:
+			default:
+			}
+		}
+		idleTimer.Reset(idleAfterAnswer)
+		idleC = idleTimer.C
+	}
+	defer stopIdleTimer()
+
+	for {
+		select {
+		case event := <-events:
+			if len(event.line) > 0 {
+				if handleErr := state.handleLine(event.line, threadID, sink); handleErr != nil {
+					return state.result(), handleErr
+				}
+				if state.hasTerminalAnswer() {
+					return state.result(), nil
+				}
+				resetIdleTimer()
+			}
+			if event.err != nil {
+				if errors.Is(event.err, io.EOF) {
+					return state.result(), nil
+				}
+				return state.result(), event.err
+			}
+		case <-idleC:
+			_ = reader.Close()
+			return state.result(), nil
+		}
+	}
 }
 
 func (c *NotionAIClient) loadFinalAnswerOnce(ctx context.Context, threadID string) ([]string, agentMessage, error) {
@@ -2952,7 +3114,7 @@ func (c *NotionAIClient) streamRunInferenceTranscript(ctx context.Context, paylo
 		}()
 	}
 
-	return consumeNDJSONStream(resp.Body, threadID, sink)
+	return consumeNDJSONStreamWithIdleClose(resp.Body, threadID, sink, ndjsonIdleAfterAnswerTimeout)
 }
 
 func (c *NotionAIClient) buildInferencePayload(req PromptRunRequest, threadID string, attachments []UploadedAttachment) (map[string]any, inferencePayloadMeta) {
@@ -3275,11 +3437,12 @@ func (c *NotionAIClient) RunPrompt(ctx context.Context, req PromptRunRequest) (I
 		return InferenceResult{}, err
 	}
 	traceID := stringValue(payload["traceId"])
-	ndjsonBytes, err := c.postJSON(ctx, c.Config.NotionUpstream().API("runInferenceTranscript"), payload, "application/x-ndjson")
+	resp, err := c.postJSONResponse(ctx, c.Config.NotionUpstream().API("runInferenceTranscript"), payload, "application/x-ndjson")
 	if err != nil {
 		return InferenceResult{}, err
 	}
-	parsed, parseErr := consumeNDJSONStream(bytes.NewReader(ndjsonBytes), actualThreadID, InferenceStreamSink{})
+	defer resp.Body.Close()
+	parsed, parseErr := consumeNDJSONStreamWithIdleClose(resp.Body, actualThreadID, InferenceStreamSink{}, ndjsonIdleAfterAnswerTimeout)
 	messageIDs := parsed.MessageIDs
 	finalAgent := parsed.FinalAgent
 	if strings.TrimSpace(finalAgent.Text) == "" {
@@ -3300,9 +3463,6 @@ func (c *NotionAIClient) RunPrompt(ctx context.Context, req PromptRunRequest) (I
 		return InferenceResult{}, fmt.Errorf("thread %s finished without final text", actualThreadID)
 	}
 	lineCount := parsed.LineCount
-	if lineCount == 0 {
-		lineCount = countValidNDJSONLines(string(ndjsonBytes))
-	}
 	if strings.TrimSpace(req.UpstreamThreadID) != "" && !req.SuppressUpstreamThreadPersistence {
 		_ = c.markInferenceTranscriptSeen(ctx, actualThreadID)
 	}

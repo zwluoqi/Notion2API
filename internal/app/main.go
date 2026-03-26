@@ -686,6 +686,7 @@ func attachConversationResponseMetadata(payload map[string]any, conversationID s
 
 func (a *App) resolveContinuationConversation(r *http.Request, payload map[string]any, previousResponseID string, hiddenPrompt string, segments []conversationPromptSegment) (continuationTarget, bool) {
 	rawCount := sessionRawMessageCount(segments)
+	explicitConversationID := requestedConversationID(r, payload)
 	validateState := func(state *conversationContinuationState) bool {
 		if state == nil {
 			return true
@@ -696,8 +697,8 @@ func (a *App) resolveContinuationConversation(r *http.Request, payload map[strin
 		}
 		return true
 	}
-	if conversationID := requestedConversationID(r, payload); conversationID != "" {
-		if entry, ok := a.State.conversations().Get(conversationID); ok && strings.TrimSpace(entry.ThreadID) != "" {
+	if explicitConversationID != "" {
+		if entry, ok := a.State.conversations().Get(explicitConversationID); ok && strings.TrimSpace(entry.ThreadID) != "" {
 			state, err := a.State.loadConversationContinuationStateByConversationID(entry.ID)
 			if err == nil && !validateState(state) {
 				return continuationTarget{}, false
@@ -707,7 +708,7 @@ func (a *App) resolveContinuationConversation(r *http.Request, payload map[strin
 			}
 			return continuationTarget{Conversation: entry}, true
 		}
-		if state, err := a.State.loadConversationContinuationStateByConversationID(conversationID); err == nil && state != nil {
+		if state, err := a.State.loadConversationContinuationStateByConversationID(explicitConversationID); err == nil && state != nil {
 			if !validateState(state) {
 				return continuationTarget{}, false
 			}
@@ -718,6 +719,7 @@ func (a *App) resolveContinuationConversation(r *http.Request, payload map[strin
 			}
 			return continuationTarget{Conversation: entry, Session: state}, true
 		}
+		return continuationTarget{}, false
 	}
 	if previousResponseID != "" {
 		if stored, ok := a.State.getStoredResponse(previousResponseID); ok {

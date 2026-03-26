@@ -42,20 +42,18 @@
     "auto_switch_account": true
   },
   "features": {
-    "use_web_search": true,
+    "use_web_search": false,
     "use_read_only_mode": true,
     "force_disable_upstream_edits": true,
     "writer_mode": false,
-    "enable_generate_image": true,
+    "enable_generate_image": false,
     "enable_csv_attachment_support": true,
     "ai_surface": "ai_module",
     "thread_type": "workflow",
     "is_custom_agent": false,
     "is_custom_agent_builder": false,
     "use_custom_agent_draft": false,
-    "search_scopes": [
-      "everything"
-    ]
+    "search_scopes": []
   },
   "model_aliases": {
     "gpt54": "gpt-5.4",
