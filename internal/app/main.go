@@ -1273,11 +1273,6 @@ func (a *App) writeChatCompletionLiveStream(w http.ResponseWriter, r *http.Reque
 		defer writeMu.Unlock()
 		return writeSSEData(w, flusher, payload)
 	}
-	safeWriteComment := func(comment string) error {
-		writeMu.Lock()
-		defer writeMu.Unlock()
-		return writeSSEComment(w, flusher, comment)
-	}
 	safeWriteDone := func() {
 		writeMu.Lock()
 		defer writeMu.Unlock()
@@ -1335,7 +1330,9 @@ func (a *App) writeChatCompletionLiveStream(w http.ResponseWriter, r *http.Reque
 		if err := startStream(); err != nil {
 			return err
 		}
-		return safeWriteComment("keepalive")
+		return safeWriteData(buildChatStreamChunk(completionID, created, modelID, []map[string]any{
+			buildChatStreamHeartbeatChoice(0),
+		}, nil))
 	}
 	stopProactiveFlush := make(chan struct{})
 	defer close(stopProactiveFlush)
@@ -1461,11 +1458,6 @@ func (a *App) writeResponsesLiveStream(w http.ResponseWriter, r *http.Request, r
 		sequenceNumber++
 		return writeSSEEvent(w, flusher, eventType, payload)
 	}
-	safeWriteComment := func(comment string) error {
-		writeMu.Lock()
-		defer writeMu.Unlock()
-		return writeSSEComment(w, flusher, comment)
-	}
 	safeWriteDone := func() {
 		writeMu.Lock()
 		defer writeMu.Unlock()
@@ -1556,7 +1548,7 @@ func (a *App) writeResponsesLiveStream(w http.ResponseWriter, r *http.Request, r
 		if err := startStream(); err != nil {
 			return err
 		}
-		return safeWriteComment("keepalive")
+		return safeWriteEvent("response.in_progress", buildResponsesInProgressEvent(inProgressResponse))
 	}
 
 	result, err := a.runPromptStreamWithSink(r, request, InferenceStreamSink{

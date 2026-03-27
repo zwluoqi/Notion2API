@@ -1477,14 +1477,27 @@ func normalizePatchEntryType(value string) string {
 }
 
 func patchEntryKeyFromRest(stepIndex int, rest string, field string) (string, bool) {
-	if !strings.HasSuffix(rest, field) {
-		return "", false
+	switch field {
+	case "/content":
+		contentIndex := strings.LastIndex(rest, field)
+		if contentIndex < 0 {
+			return "", false
+		}
+		entryPath := rest[:contentIndex]
+		if entryPath == "" || !strings.Contains(entryPath, "/value/") {
+			return "", false
+		}
+		return fmt.Sprintf("/s/%d%s", stepIndex, entryPath), true
+	default:
+		if !strings.HasSuffix(rest, field) {
+			return "", false
+		}
+		entryPath := strings.TrimSuffix(rest, field)
+		if entryPath == rest || !strings.Contains(entryPath, "/value/") {
+			return "", false
+		}
+		return fmt.Sprintf("/s/%d%s", stepIndex, entryPath), true
 	}
-	entryPath := strings.TrimSuffix(rest, field)
-	if entryPath == rest || !strings.Contains(entryPath, "/value/") {
-		return "", false
-	}
-	return fmt.Sprintf("/s/%d%s", stepIndex, entryPath), true
 }
 
 func parsePatchValueRemovalIndex(rest string) (int, bool) {
@@ -1656,13 +1669,12 @@ func (s *ndjsonTranscriptState) removePatchValueEntry(stepIndex int, valueIndex 
 }
 
 func (s *ndjsonTranscriptState) patchEntryType(stepIndex int, rest string) string {
-	contentIndex := strings.LastIndex(rest, "/content")
-	if contentIndex < 0 {
+	entryKey, ok := patchEntryKeyFromRest(stepIndex, rest, "/content")
+	if !ok {
 		return ""
 	}
 	s.ensurePatchMaps()
-	prefix := fmt.Sprintf("/s/%d%s", stepIndex, rest[:contentIndex])
-	if entryType := normalizePatchEntryType(s.patchValueTypes[prefix]); entryType != "" {
+	if entryType := normalizePatchEntryType(s.patchValueTypes[entryKey]); entryType != "" {
 		return entryType
 	}
 	return ""
