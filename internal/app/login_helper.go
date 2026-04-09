@@ -71,6 +71,7 @@ type notionLoginAPIError struct {
 	StatusCode     int
 	Message        string
 	ClientDataType string
+	FinalURL       string
 	RetryAfter     time.Duration
 }
 
@@ -81,6 +82,9 @@ func (e *notionLoginAPIError) Error() string {
 	message := strings.TrimSpace(e.Message)
 	if message == "" {
 		message = http.StatusText(e.StatusCode)
+	}
+	if finalURL := strings.TrimSpace(e.FinalURL); finalURL != "" && !strings.EqualFold(strings.TrimSpace(e.URL), finalURL) {
+		message = fmt.Sprintf("%s (final_url=%s)", message, finalURL)
 	}
 	if strings.TrimSpace(e.ClientDataType) != "" {
 		return fmt.Sprintf("%s failed: %d %s (%s)", e.URL, e.StatusCode, message, e.ClientDataType)
@@ -430,6 +434,7 @@ func postNotionLoginJSON(ctx context.Context, client *http.Client, upstream Noti
 			URL:        targetURL,
 			StatusCode: resp.StatusCode,
 			Message:    htmlSummary,
+			FinalURL:   firstNonEmpty(resp.Request.URL.String(), targetURL),
 			RetryAfter: parseRetryAfter(resp.Header),
 		}
 	}
@@ -460,7 +465,7 @@ func sendTemporaryPassword(ctx context.Context, client *http.Client, upstream No
 	for attempt := 0; attempt < 3; attempt++ {
 		payload, err := postNotionLoginJSON(ctx, client, upstream, upstream.API("sendTemporaryPassword"), clientVersion, upstream.LoginURL(), "", map[string]any{
 			"email":              strings.TrimSpace(email),
-			"disableLoginLink":   false,
+			"disableLoginLink":   true,
 			"native":             false,
 			"isSignup":           false,
 			"shouldHidePasscode": false,
@@ -573,12 +578,18 @@ func failLoginState(path string, state loginPendingState, err error) (LoginStatu
 	state.Status = "failed"
 	var apiErr *notionLoginAPIError
 	if errors.As(err, &apiErr) {
+		state.CurrentURL = firstNonEmpty(strings.TrimSpace(apiErr.URL), state.CurrentURL)
+		state.FinalURL = firstNonEmpty(strings.TrimSpace(apiErr.FinalURL), state.FinalURL)
 		switch apiErr.StatusCode {
 		case http.StatusTooManyRequests:
 			state.Status = "rate_limited"
 		case http.StatusBadRequest:
 			if apiErr.ClientDataType == "invalid_or_expired_password" {
 				state.Status = "invalid_code"
+			}
+		case http.StatusOK:
+			if strings.TrimSpace(apiErr.FinalURL) != "" {
+				state.Status = "authorization_required"
 			}
 		}
 	}

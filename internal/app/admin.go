@@ -260,6 +260,18 @@ func (a *App) adminTokenValid(token string) bool {
 	return true
 }
 
+func (a *App) adminCredentialValid(credential string, password string) bool {
+	credential = strings.TrimSpace(credential)
+	password = strings.TrimSpace(password)
+	if credential == "" || password == "" {
+		return false
+	}
+	if securePasswordEqual(password, credential) {
+		return true
+	}
+	return a.adminTokenValid(credential)
+}
+
 func adminTokenFromRequest(r *http.Request) string {
 	if token := strings.TrimSpace(r.Header.Get("X-Admin-Token")); token != "" {
 		return token
@@ -284,7 +296,7 @@ func (a *App) adminAuthOK(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusForbidden, map[string]any{"detail": "admin password is not configured"})
 		return false
 	}
-	if a.adminTokenValid(adminTokenFromRequest(r)) {
+	if a.adminCredentialValid(adminTokenFromRequest(r), password) {
 		return true
 	}
 	writeJSON(w, http.StatusUnauthorized, map[string]any{"detail": "admin authentication required"})
@@ -461,7 +473,7 @@ func (a *App) handleAdminVerify(w http.ResponseWriter, r *http.Request) {
 	cfg, _, _ := a.State.Snapshot()
 	passwordRequired := true
 	passwordConfigured := strings.TrimSpace(cfg.Admin.Password) != ""
-	authenticated := passwordConfigured && a.adminTokenValid(adminTokenFromRequest(r))
+	authenticated := passwordConfigured && a.adminCredentialValid(adminTokenFromRequest(r), cfg.Admin.Password)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":             true,
 		"authenticated":       authenticated,

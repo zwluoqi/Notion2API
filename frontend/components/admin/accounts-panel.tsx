@@ -805,6 +805,16 @@ export function AccountsPanel({
                       <div className="mt-2 value-box pretty-scroll">{selectedAccount.last_error || '-'}</div>
                     </div>
                   </div>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className={META_TILE_CLASS}>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Login URL</div>
+                      <div className="mt-2 value-box pretty-scroll">{selectedAccount.login_status?.current_url || '-'}</div>
+                    </div>
+                    <div className={META_TILE_CLASS}>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Final URL</div>
+                      <div className="mt-2 value-box pretty-scroll">{selectedAccount.login_status?.final_url || '-'}</div>
+                    </div>
+                  </div>
                   <div className="grid gap-3 lg:grid-cols-3">
                     <div className={META_TILE_CLASS}>
                       <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Probe JSON</div>
@@ -917,6 +927,5 @@ export function AccountsPanel({
     </div>
   );
 }
-
 
 

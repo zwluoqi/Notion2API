@@ -184,6 +184,8 @@ export interface AccountItem {
     status?: string;
     message?: string;
     error?: string;
+    current_url?: string;
+    final_url?: string;
   };
 }
 

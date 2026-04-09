@@ -183,6 +183,7 @@ type PromptRunRequest struct {
 	PinnedAccountEmail                string
 	AllowPinnedAccountFallback        bool
 	StreamReasoningWarmup             bool
+	SuppressReasoningOutput           bool
 	SuppressUpstreamThreadPersistence bool
 	SessionFingerprint                string
 	RawMessageCount                   int
@@ -3349,6 +3350,7 @@ func (c *NotionAIClient) preparePromptRequest(ctx context.Context, req PromptRun
 		NotionModel:                       req.NotionModel,
 		UseWebSearch:                      req.UseWebSearch,
 		UpstreamThreadID:                  req.UpstreamThreadID,
+		SuppressReasoningOutput:           req.SuppressReasoningOutput,
 		SuppressUpstreamThreadPersistence: req.SuppressUpstreamThreadPersistence,
 		SessionFingerprint:                req.SessionFingerprint,
 		RawMessageCount:                   req.RawMessageCount,
