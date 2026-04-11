@@ -34,6 +34,8 @@ export interface FeatureConfig {
   enable_csv_attachment_support?: boolean;
   ai_surface?: string;
   thread_type?: string;
+  account_dispatch_mode?: string;
+  force_new_conversation?: boolean;
   is_custom_agent?: boolean;
   is_custom_agent_builder?: boolean;
   use_custom_agent_draft?: boolean;

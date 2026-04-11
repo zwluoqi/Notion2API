@@ -656,12 +656,19 @@ func preferActiveAccountForRequest(cfg AppConfig, request *PromptRunRequest) {
 	if request == nil || strings.TrimSpace(request.PinnedAccountEmail) != "" {
 		return
 	}
+	if cfg.Features.AccountDispatchMode == accountDispatchModeRoundRobin {
+		return
+	}
 	if account, _, ok := cfg.ResolveActiveAccount(); ok {
 		if email := strings.TrimSpace(account.Email); email != "" {
 			request.PinnedAccountEmail = email
 			request.AllowPinnedAccountFallback = true
 		}
 	}
+}
+
+func shouldForceNewConversation(cfg AppConfig) bool {
+	return cfg.Features.ForceNewConversation
 }
 
 func resolveRequestPromptForContinuation(normalized NormalizedInput) string {
@@ -983,17 +990,25 @@ func (a *App) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		SessionFingerprint: originalFingerprint,
 		RawMessageCount:    originalRawMessageCount,
 	}
-	preferredConversationID := requestedConversationID(r, payload)
+	forceNewConversation := shouldForceNewConversation(cfg)
+	preferredConversationID := ""
+	if !forceNewConversation {
+		preferredConversationID = requestedConversationID(r, payload)
+	}
 	conversation := ConversationEntry{}
-	if matched, ok := a.resolveContinuationConversation(r, payload, "", hiddenPrompt, normalized.Segments); ok {
-		conversation = matched.Conversation
-		request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
-		request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
-		request.continuationDraft = buildContinuationDraft(matched.Session)
-		if matched.Session != nil && (request.RawMessageCount == matched.Session.Session.RawMessageCount || request.ForceSessionRepeatTurn) {
-			request.SessionRepeatTurn = true
+	if !forceNewConversation {
+		if matched, ok := a.resolveContinuationConversation(r, payload, "", hiddenPrompt, normalized.Segments); ok {
+			conversation = matched.Conversation
+			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
+			request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
+			request.continuationDraft = buildContinuationDraft(matched.Session)
+			if matched.Session != nil && (request.RawMessageCount == matched.Session.Session.RawMessageCount || request.ForceSessionRepeatTurn) {
+				request.SessionRepeatTurn = true
+			}
+			request.Prompt = latestPrompt
+		} else {
+			request.PinnedAccountEmail = requestedAccountEmail(r, payload)
 		}
-		request.Prompt = latestPrompt
 	} else {
 		request.PinnedAccountEmail = requestedAccountEmail(r, payload)
 	}
@@ -1070,25 +1085,36 @@ func (a *App) handleSillyTavernChatCompletionsPayload(w http.ResponseWriter, r *
 	}
 	a.markEphemeralConversationRequest(&request)
 
-	preferredConversationID := requestedConversationID(r, payload)
+	forceNewConversation := shouldForceNewConversation(cfg)
+	preferredConversationID := ""
+	if !forceNewConversation {
+		preferredConversationID = requestedConversationID(r, payload)
+	}
 	conversation := ConversationEntry{}
-	if matched, ok := a.resolveSillyTavernContinuation(r, payload, ctx); ok {
-		request.SuppressUpstreamThreadPersistence = matched.SuppressPersist
-		conversation = matched.Target.Conversation
-		request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
-		request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
-		request.continuationDraft = buildContinuationDraft(matched.Target.Session)
-		request.ForceSessionRepeatTurn = matched.ForceRepeatTurn
-		if request.UpstreamThreadID != "" {
-			if ctx.Mode == sillyTavernModeContinue {
-				request.Prompt = sillyTavernContinuationPrompt(payload)
-			} else {
-				request.Prompt = ctx.LatestPrompt
+	if !forceNewConversation {
+		if matched, ok := a.resolveSillyTavernContinuation(r, payload, ctx); ok {
+			request.SuppressUpstreamThreadPersistence = matched.SuppressPersist
+			conversation = matched.Target.Conversation
+			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
+			request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
+			request.continuationDraft = buildContinuationDraft(matched.Target.Session)
+			request.ForceSessionRepeatTurn = matched.ForceRepeatTurn
+			if request.UpstreamThreadID != "" {
+				if ctx.Mode == sillyTavernModeContinue {
+					request.Prompt = sillyTavernContinuationPrompt(payload)
+				} else {
+					request.Prompt = ctx.LatestPrompt
+				}
+			}
+		} else {
+			request.PinnedAccountEmail = requestedAccountEmail(r, payload)
+			preferActiveAccountForRequest(cfg, &request)
+			if ctx.Mode == sillyTavernModeQuiet || ctx.Mode == sillyTavernModeImpersona {
+				request.SuppressUpstreamThreadPersistence = true
 			}
 		}
 	} else {
 		request.PinnedAccountEmail = requestedAccountEmail(r, payload)
-		preferActiveAccountForRequest(cfg, &request)
 		if ctx.Mode == sillyTavernModeQuiet || ctx.Mode == sillyTavernModeImpersona {
 			request.SuppressUpstreamThreadPersistence = true
 		}
@@ -1133,9 +1159,14 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", nilString())
 		return
 	}
+	cfg, _, registry := a.State.Snapshot()
+	forceNewConversation := shouldForceNewConversation(cfg)
 	stream, _ := payload["stream"].(bool)
 	var previousResponse map[string]any
-	previousResponseID := strings.TrimSpace(stringValue(payload["previous_response_id"]))
+	previousResponseID := ""
+	if !forceNewConversation {
+		previousResponseID = strings.TrimSpace(stringValue(payload["previous_response_id"]))
+	}
 	if previousResponseID != "" {
 		var ok bool
 		previousResponse, ok = a.State.getResponse(previousResponseID)
@@ -1153,7 +1184,6 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "input must contain text or supported attachments", "invalid_request_error", nilString())
 		return
 	}
-	cfg, _, registry := a.State.Snapshot()
 	entry, err := registry.Resolve(requestedModel(payload, cfg.DefaultPublicModel()), cfg.DefaultPublicModel())
 	if err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error", "model_not_found")
@@ -1175,17 +1205,24 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 		SessionFingerprint: originalFingerprint,
 		RawMessageCount:    originalRawMessageCount,
 	}
-	preferredConversationID := requestedConversationID(r, payload)
+	preferredConversationID := ""
+	if !forceNewConversation {
+		preferredConversationID = requestedConversationID(r, payload)
+	}
 	conversation := ConversationEntry{}
-	if matched, ok := a.resolveContinuationConversation(r, payload, previousResponseID, hiddenPrompt, normalized.Segments); ok {
-		conversation = matched.Conversation
-		request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
-		request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
-		request.continuationDraft = buildContinuationDraft(matched.Session)
-		if matched.Session != nil && (request.RawMessageCount == matched.Session.Session.RawMessageCount || request.ForceSessionRepeatTurn) {
-			request.SessionRepeatTurn = true
+	if !forceNewConversation {
+		if matched, ok := a.resolveContinuationConversation(r, payload, previousResponseID, hiddenPrompt, normalized.Segments); ok {
+			conversation = matched.Conversation
+			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
+			request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
+			request.continuationDraft = buildContinuationDraft(matched.Session)
+			if matched.Session != nil && (request.RawMessageCount == matched.Session.Session.RawMessageCount || request.ForceSessionRepeatTurn) {
+				request.SessionRepeatTurn = true
+			}
+			request.Prompt = latestPrompt
+		} else {
+			request.PinnedAccountEmail = requestedAccountEmail(r, payload)
 		}
-		request.Prompt = latestPrompt
 	} else {
 		request.PinnedAccountEmail = requestedAccountEmail(r, payload)
 	}

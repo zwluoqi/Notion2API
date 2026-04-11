@@ -152,6 +152,22 @@ func accountReloginRecentlyStarted(account NotionAccount, now time.Time) bool {
 }
 
 func sortDispatchCandidates(cfg AppConfig, accounts []NotionAccount, now time.Time) {
+	if cfg.Features.AccountDispatchMode == accountDispatchModeRoundRobin {
+		sort.Slice(accounts, func(i, j int) bool {
+			left := accounts[i]
+			right := accounts[j]
+			leftUsed := parseOptionalRFC3339(left.LastUsedAt)
+			rightUsed := parseOptionalRFC3339(right.LastUsedAt)
+			if leftUsed.IsZero() != rightUsed.IsZero() {
+				return leftUsed.IsZero()
+			}
+			if !leftUsed.Equal(rightUsed) {
+				return leftUsed.Before(rightUsed)
+			}
+			return canonicalEmailKey(left.Email) < canonicalEmailKey(right.Email)
+		})
+		return
+	}
 	activeKey := canonicalEmailKey(cfg.ActiveAccount)
 	sort.Slice(accounts, func(i, j int) bool {
 		left := accounts[i]

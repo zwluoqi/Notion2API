@@ -55,6 +55,8 @@
     "enable_csv_attachment_support": true,
     "ai_surface": "ai_module",
     "thread_type": "workflow",
+    "account_dispatch_mode": "prefer_active",
+    "force_new_conversation": false,
     "is_custom_agent": false,
     "is_custom_agent_builder": false,
     "use_custom_agent_draft": false,
@@ -66,4 +68,3 @@
   },
   "accounts": []
 }
-

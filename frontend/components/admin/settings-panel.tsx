@@ -54,6 +54,8 @@ interface SettingsFormState {
   enableCsv: boolean;
   aiSurface: string;
   threadType: string;
+  accountDispatchMode: string;
+  forceNewConversation: boolean;
   promptProfile: string;
   fallbackProfiles: string;
   maxEscalationSteps: string;
@@ -169,6 +171,8 @@ function buildFormState(config: AppConfigShape): SettingsFormState {
     enableCsv: Boolean(config.features?.enable_csv_attachment_support),
     aiSurface: String(config.features?.ai_surface || 'ai_module'),
     threadType: String(config.features?.thread_type || 'workflow'),
+    accountDispatchMode: String(config.features?.account_dispatch_mode || 'prefer_active'),
+    forceNewConversation: Boolean(config.features?.force_new_conversation),
     ...promptState,
     adminPassword: '',
     adminTTL: String(config.admin?.token_ttl_hours || 24),
@@ -421,6 +425,13 @@ export function SettingsPanel({
       value: form.enableCsv,
       onChange: (checked) => setForm({ ...form, enableCsv: checked }),
     },
+    {
+      label: '强制新对话',
+      description: '普通 API 请求直接新建 conversation / thread，跳过 conversation_id、thread_id 与历史匹配。',
+      value: form.forceNewConversation,
+      onChange: (checked) => setForm({ ...form, forceNewConversation: checked }),
+      hint: '不影响管理台账号测试页手动指定账号进行测试。',
+    },
   ];
 
   const summaryCards = useMemo(
@@ -441,6 +452,11 @@ export function SettingsPanel({
         hint: (form.aiSurface || 'ai_module') + ' / ' + (form.threadType || 'workflow'),
       },
       {
+        label: '账号调度',
+        value: form.accountDispatchMode === 'round_robin' ? '纯轮询' : '优先 Active',
+        hint: form.forceNewConversation ? '强制新对话已开启' : '自动续聊匹配已开启',
+      },
+      {
         label: '写入策略',
         value: form.forceDisableUpstreamEdits ? '强制只读' : form.readOnly ? 'Read Only' : '允许写入',
         hint: form.useWebSearch ? '默认联网已开启' : '默认联网已关闭',
@@ -459,7 +475,9 @@ export function SettingsPanel({
     [
       currentModel,
       form.aiSurface,
+      form.accountDispatchMode,
       form.forceDisableUpstreamEdits,
+      form.forceNewConversation,
       form.host,
       form.maxRefusalRetries,
       form.port,
@@ -588,6 +606,8 @@ export function SettingsPanel({
       next.features.enable_csv_attachment_support = form.enableCsv;
       next.features.ai_surface = form.aiSurface.trim() || 'ai_module';
       next.features.thread_type = form.threadType.trim() || 'workflow';
+      next.features.account_dispatch_mode = form.accountDispatchMode === 'round_robin' ? 'round_robin' : 'prefer_active';
+      next.features.force_new_conversation = form.forceNewConversation;
       next.features.is_custom_agent = false;
       next.features.is_custom_agent_builder = false;
       next.features.use_custom_agent_draft = false;
@@ -792,9 +812,31 @@ export function SettingsPanel({
               <FieldBlock label="Thread Type" description="对话线程类型。">
                 <Input value={form.threadType} onChange={(event) => setForm({ ...form, threadType: event.target.value })} className={FIELD_CLASSNAME} />
               </FieldBlock>
+              <FieldBlock label="一般请求账号调度" description="控制普通 `/v1/*` 请求在账号池中的派发方式。">
+                <Select value={form.accountDispatchMode} onValueChange={(value) => setForm({ ...form, accountDispatchMode: value })}>
+                  <SelectTrigger className={FIELD_CLASSNAME}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="prefer_active">优先 Active Account</SelectItem>
+                    <SelectItem value="round_robin">纯轮询</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FieldBlock>
+            </div>
+
+            <div className="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="rounded-md border bg-primary/6 p-4">
+                <div className="text-sm font-semibold">Active Account 的作用</div>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  默认模式下普通请求会优先尝试当前 active_account；管理台测试、登录刷新和无账号池兜底也会参考它。切到“纯轮询”后，普通请求不再因为 active_account 被优先派发。
+                </p>
+              </div>
               <div className="rounded-md border bg-primary/6 p-4">
                 <div className="text-sm font-semibold">工具调用策略</div>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">当前保存逻辑会持续把官方工具调用相关开关写死为关闭，优先保证聊天回复路径稳定，不把页面创建类动作混入普通对话。</p>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  当前保存逻辑会持续把官方工具调用相关开关写死为关闭，优先保证聊天回复路径稳定，不把页面创建类动作混入普通对话。
+                </p>
               </div>
             </div>
           </SectionCard>
@@ -1291,5 +1333,3 @@ export function SettingsPanel({
     </div>
   );
 }
-
-

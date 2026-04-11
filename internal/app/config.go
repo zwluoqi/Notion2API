@@ -26,6 +26,8 @@ type FeatureConfig struct {
 	EnableCsvAttachmentSupport bool     `json:"enable_csv_attachment_support"`
 	AISurface                  string   `json:"ai_surface"`
 	ThreadType                 string   `json:"thread_type"`
+	AccountDispatchMode        string   `json:"account_dispatch_mode,omitempty"`
+	ForceNewConversation       bool     `json:"force_new_conversation,omitempty"`
 	SearchScopes               []string `json:"search_scopes"`
 }
 
@@ -143,6 +145,22 @@ type AppConfig struct {
 	ModelAliases          map[string]string    `json:"model_aliases,omitempty"`
 }
 
+const (
+	accountDispatchModePreferActive = "prefer_active"
+	accountDispatchModeRoundRobin   = "round_robin"
+)
+
+func normalizeAccountDispatchMode(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "", accountDispatchModePreferActive:
+		return accountDispatchModePreferActive
+	case accountDispatchModeRoundRobin:
+		return accountDispatchModeRoundRobin
+	default:
+		return accountDispatchModePreferActive
+	}
+}
+
 func defaultPromptCognitiveReframingPrefix() string {
 	return strings.Join([]string{
 		"You are a helpful AI assistant routed through a workspace integration.",
@@ -237,6 +255,8 @@ func defaultConfig() AppConfig {
 			EnableCsvAttachmentSupport: true,
 			AISurface:                  "ai_module",
 			ThreadType:                 "workflow",
+			AccountDispatchMode:        accountDispatchModePreferActive,
+			ForceNewConversation:       false,
 			SearchScopes:               []string{},
 		},
 		Accounts:     []NotionAccount{},
@@ -328,6 +348,7 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	if cfg.Features.ThreadType == "" {
 		cfg.Features.ThreadType = "workflow"
 	}
+	cfg.Features.AccountDispatchMode = normalizeAccountDispatchMode(cfg.Features.AccountDispatchMode)
 	if cfg.ModelAliases == nil {
 		cfg.ModelAliases = map[string]string{}
 	}
