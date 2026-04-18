@@ -46,6 +46,7 @@ func builtinModelDefinitions() []ModelDefinition {
 		{ID: "sonnet-4.6", Name: "Sonnet 4.6", NotionModel: "almond-croissant-low", Family: "anthropic", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"claude-sonnet-4.6", "almond-croissant-low"}},
 		{ID: "opus-4.7", Name: "Opus 4.7", NotionModel: "apricot-sorbet-medium", Family: "anthropic", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"claude-opus-4.7", "opus47", "apricot-sorbet-medium"}},
 		{ID: "opus-4.6", Name: "Opus 4.6", NotionModel: "avocado-froyo-medium", Family: "anthropic", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"claude-opus-4.6", "avocado-froyo-medium"}},
+		{ID: "opus-4.7", Name: "Opus 4.7", NotionModel: "apricot-sorbet-medium", Family: "anthropic", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"claude-opus-4.7", "apricot-sorbet-medium"}},		
 		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", NotionModel: "oregon-grape-medium", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"oregon-grape-medium"}},
 		{ID: "gpt-5.4-nano", Name: "GPT-5.4 Nano", NotionModel: "otaheite-apple-medium", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"otaheite-apple-medium"}},
 		{ID: "minimax-m2.5", Name: "MiniMax M2.5", NotionModel: "fireworks-minimax-m2.5", Family: "mystery", Group: "intelligent", Enabled: true, Aliases: []string{"fireworks-minimax-m2.5"}},
