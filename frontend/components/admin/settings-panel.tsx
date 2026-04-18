@@ -49,6 +49,7 @@ interface SettingsFormState {
   useWebSearch: boolean;
   readOnly: boolean;
   forceDisableUpstreamEdits: boolean;
+  forceFreshThreadPerRequest: boolean;
   writerMode: boolean;
   generateImage: boolean;
   enableCsv: boolean;
@@ -164,6 +165,7 @@ function buildFormState(config: AppConfigShape): SettingsFormState {
     useWebSearch: Boolean(config.features?.use_web_search),
     readOnly: Boolean(config.features?.use_read_only_mode),
     forceDisableUpstreamEdits: config.features?.force_disable_upstream_edits !== false,
+    forceFreshThreadPerRequest: Boolean(config.features?.force_fresh_thread_per_request),
     writerMode: Boolean(config.features?.writer_mode),
     generateImage: Boolean(config.features?.enable_generate_image),
     enableCsv: Boolean(config.features?.enable_csv_attachment_support),
@@ -385,6 +387,13 @@ export function SettingsPanel({
       hint: '开启后会自动锁定 Read Only，并同步关闭 Writer Mode。',
     },
     {
+      label: '每次请求新建 Thread',
+      description: '忽略上游 continuation，所有请求都新开 thread，并尽量用完整上下文重放。',
+      value: form.forceFreshThreadPerRequest,
+      onChange: (checked) => setForm({ ...form, forceFreshThreadPerRequest: checked }),
+      hint: '适合规避同一上游 thread 内连续拒答、重复道歉或 continuation 协议漂移。',
+    },
+    {
       label: 'Read Only',
       description: '拦截协议层写操作，保留检索、问答和总结类能力。',
       value: form.readOnly,
@@ -443,7 +452,7 @@ export function SettingsPanel({
       {
         label: '写入策略',
         value: form.forceDisableUpstreamEdits ? '强制只读' : form.readOnly ? 'Read Only' : '允许写入',
-        hint: form.useWebSearch ? '默认联网已开启' : '默认联网已关闭',
+        hint: form.forceFreshThreadPerRequest ? '每次请求都会新建上游 thread' : form.useWebSearch ? '默认联网已开启' : '默认联网已关闭',
       },
       {
         label: '会话落盘',
@@ -460,6 +469,7 @@ export function SettingsPanel({
       currentModel,
       form.aiSurface,
       form.forceDisableUpstreamEdits,
+      form.forceFreshThreadPerRequest,
       form.host,
       form.maxRefusalRetries,
       form.port,
@@ -582,6 +592,7 @@ export function SettingsPanel({
       next.features = next.features || {};
       next.features.use_web_search = form.useWebSearch;
       next.features.force_disable_upstream_edits = form.forceDisableUpstreamEdits;
+      next.features.force_fresh_thread_per_request = form.forceFreshThreadPerRequest;
       next.features.use_read_only_mode = form.forceDisableUpstreamEdits ? true : form.readOnly;
       next.features.writer_mode = form.forceDisableUpstreamEdits ? false : form.writerMode;
       next.features.enable_generate_image = form.generateImage;

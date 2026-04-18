@@ -183,6 +183,7 @@ type PromptRunRequest struct {
 	PinnedAccountEmail                string
 	AllowPinnedAccountFallback        bool
 	StreamReasoningWarmup             bool
+	SuppressReasoningOutput           bool
 	SuppressUpstreamThreadPersistence bool
 	SessionFingerprint                string
 	RawMessageCount                   int
@@ -190,6 +191,7 @@ type PromptRunRequest struct {
 	EphemeralConversation             bool
 	EphemeralReason                   string
 	EphemeralDeleteAfter              time.Time
+	ForceLocalConversationContinue    bool
 	SessionRepeatTurn                 bool
 	ForceSessionRepeatTurn            bool
 	attachmentThreadReady             bool

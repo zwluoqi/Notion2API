@@ -44,6 +44,7 @@ func builtinModelDefinitions() []ModelDefinition {
 		{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash", NotionModel: "vertex-gemini-2.5-flash", Family: "gemini", Group: "fast", Enabled: true, Aliases: []string{"vertex-gemini-2.5-flash"}},
 		{ID: "gemini-3.1-pro", Name: "Gemini 3.1 Pro", NotionModel: "galette-medium-thinking", Family: "gemini", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"gemini31pro", "galette-medium-thinking"}},
 		{ID: "sonnet-4.6", Name: "Sonnet 4.6", NotionModel: "almond-croissant-low", Family: "anthropic", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"claude-sonnet-4.6", "almond-croissant-low"}},
+		{ID: "opus-4.7", Name: "Opus 4.7", NotionModel: "apricot-sorbet-medium", Family: "anthropic", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"claude-opus-4.7", "opus47", "apricot-sorbet-medium"}},
 		{ID: "opus-4.6", Name: "Opus 4.6", NotionModel: "avocado-froyo-medium", Family: "anthropic", Group: "intelligent", Beta: true, Enabled: true, Aliases: []string{"claude-opus-4.6", "avocado-froyo-medium"}},
 		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", NotionModel: "oregon-grape-medium", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"oregon-grape-medium"}},
 		{ID: "gpt-5.4-nano", Name: "GPT-5.4 Nano", NotionModel: "otaheite-apple-medium", Family: "openai", Group: "fast", Beta: true, Enabled: true, Aliases: []string{"otaheite-apple-medium"}},
@@ -381,4 +382,3 @@ func slugModelID(value string) string {
 	out = strings.ReplaceAll(out, "--", "-")
 	return out
 }
-

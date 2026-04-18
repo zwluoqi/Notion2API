@@ -21,6 +21,7 @@ type FeatureConfig struct {
 	UseWebSearch               bool     `json:"use_web_search"`
 	UseReadOnlyMode            bool     `json:"use_read_only_mode"`
 	ForceDisableUpstreamEdits  bool     `json:"force_disable_upstream_edits"`
+	ForceFreshThreadPerRequest bool     `json:"force_fresh_thread_per_request"`
 	WriterMode                 bool     `json:"writer_mode"`
 	EnableGenerateImage        bool     `json:"enable_generate_image"`
 	EnableCsvAttachmentSupport bool     `json:"enable_csv_attachment_support"`
@@ -232,6 +233,7 @@ func defaultConfig() AppConfig {
 			UseWebSearch:               false,
 			UseReadOnlyMode:            true,
 			ForceDisableUpstreamEdits:  true,
+			ForceFreshThreadPerRequest: false,
 			WriterMode:                 false,
 			EnableGenerateImage:        false,
 			EnableCsvAttachmentSupport: true,

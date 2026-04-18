@@ -702,6 +702,7 @@ func (a *App) handleAdminTest(w http.ResponseWriter, r *http.Request) {
 		Attachments:                       attachments,
 		SuppressUpstreamThreadPersistence: strings.TrimSpace(preferredConversationID) == "",
 	}
+	freshThreadMode := forceFreshThreadPerRequest(cfg)
 	request.PinnedAccountEmail = requestedAccountEmail(r, payload)
 	if request.PinnedAccountEmail == "" && requestedAdminDispatchMode(payload) == "active" {
 		if account, _, ok := cfg.ResolveActiveAccount(); ok {
@@ -712,9 +713,14 @@ func (a *App) handleAdminTest(w http.ResponseWriter, r *http.Request) {
 	if preferredConversationID != "" {
 		if matched, ok := a.resolveContinuationConversation(r, payload, "", "", nil); ok {
 			conversation = matched.Conversation
-			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
 			request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), request.PinnedAccountEmail)
-			request.continuationDraft = buildContinuationDraft(matched.Session)
+			if freshThreadMode {
+				request.ForceLocalConversationContinue = strings.TrimSpace(conversation.ID) != ""
+				request.Prompt = buildFreshThreadReplayPromptFromConversation(conversation, prompt, attachments, prompt)
+			} else {
+				request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
+				request.continuationDraft = buildContinuationDraft(matched.Session)
+			}
 		}
 	}
 	request.ConversationID = firstNonEmpty(strings.TrimSpace(conversation.ID), preferredConversationID)

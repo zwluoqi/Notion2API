@@ -29,6 +29,7 @@ export interface FeatureConfig {
   use_web_search?: boolean;
   use_read_only_mode?: boolean;
   force_disable_upstream_edits?: boolean;
+  force_fresh_thread_per_request?: boolean;
   writer_mode?: boolean;
   enable_generate_image?: boolean;
   enable_csv_attachment_support?: boolean;
