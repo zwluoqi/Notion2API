@@ -113,8 +113,18 @@ func formatTimeOrEmpty(value time.Time) string {
 	return value.Format(time.RFC3339)
 }
 
+func validateConfiguredAPIKey(cfg AppConfig) error {
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		return fmt.Errorf("api key is required")
+	}
+	return nil
+}
+
 func newServerState(cfg AppConfig) (*ServerState, error) {
 	cfg = normalizeConfig(cfg)
+	if err := validateConfiguredAPIKey(cfg); err != nil {
+		return nil, err
+	}
 	store, err := openSQLiteStore(cfg)
 	if err != nil {
 		return nil, err
@@ -181,6 +191,9 @@ func newServerState(cfg AppConfig) (*ServerState, error) {
 
 func (s *ServerState) ApplyConfig(cfg AppConfig) error {
 	cfg = normalizeConfig(cfg)
+	if err := validateConfiguredAPIKey(cfg); err != nil {
+		return err
+	}
 	registry := buildModelRegistry(cfg)
 	probePath, userName, spaceName, activeEmail := cfg.ResolveSessionTarget()
 	session := SessionInfo{}
@@ -214,6 +227,9 @@ func (s *ServerState) Snapshot() (AppConfig, SessionInfo, ModelRegistry) {
 
 func (s *ServerState) SaveAndApply(cfg AppConfig) error {
 	cfg = normalizeConfig(cfg)
+	if err := validateConfiguredAPIKey(cfg); err != nil {
+		return err
+	}
 	current, _, _ := s.Snapshot()
 	if strings.TrimSpace(cfg.ConfigPath) != "" {
 		if strings.TrimSpace(current.ConfigPath) != strings.TrimSpace(cfg.ConfigPath) || !persistedConfigEqual(current, cfg) {
@@ -451,7 +467,8 @@ func (a *App) authOK(w http.ResponseWriter, r *http.Request) bool {
 	cfg, _, _ := a.State.Snapshot()
 	expected := strings.TrimSpace(cfg.APIKey)
 	if expected == "" {
-		return true
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server api key is not configured", "server_error", "api_key_required")
+		return false
 	}
 	if strings.TrimSpace(r.Header.Get("Authorization")) == "Bearer "+expected {
 		return true
@@ -667,12 +684,59 @@ func preferActiveAccountForRequest(cfg AppConfig, request *PromptRunRequest) {
 	}
 }
 
-func shouldForceNewConversation(cfg AppConfig) bool {
-	return cfg.Features.ForceNewConversation
-}
-
 func resolveRequestPromptForContinuation(normalized NormalizedInput) string {
 	return firstNonEmpty(strings.TrimSpace(normalized.DisplayPrompt), strings.TrimSpace(normalized.Prompt))
+}
+
+func forceFreshThreadPerRequest(cfg AppConfig) bool {
+	return cfg.Features.ForceFreshThreadPerRequest
+}
+
+func latestReplayPrompt(latestPrompt string, attachments []InputAttachment, fallback string) string {
+	clean := strings.TrimSpace(latestPrompt)
+	if clean == "" && len(attachments) > 0 {
+		clean = defaultUploadedAttachmentPrompt
+	}
+	return firstNonEmpty(clean, strings.TrimSpace(fallback))
+}
+
+func buildFreshThreadReplayPromptFromConversation(conversation ConversationEntry, latestPrompt string, attachments []InputAttachment, fallback string) string {
+	segments := conversationMessageSegments(&conversation)
+	if len(segments) == 0 {
+		return latestReplayPrompt(latestPrompt, attachments, fallback)
+	}
+	cleanLatest := latestReplayPrompt(latestPrompt, attachments, "")
+	if cleanLatest != "" {
+		last := segments[len(segments)-1]
+		if last.Role != "user" || collapseWhitespace(last.Text) != collapseWhitespace(cleanLatest) {
+			segments = append(segments, conversationPromptSegment{
+				Role: "user",
+				Text: cleanLatest,
+			})
+		}
+	}
+	if prompt := buildConversationTranscriptPrompt(segments); strings.TrimSpace(prompt) != "" {
+		return prompt
+	}
+	return latestReplayPrompt(latestPrompt, attachments, fallback)
+}
+
+func buildFreshThreadReplayPromptFromStoredResponse(previousResponsePrompt string, latestPrompt string, attachments []InputAttachment, fallback string) string {
+	cleanPrevious := strings.TrimSpace(previousResponsePrompt)
+	if cleanPrevious == "" {
+		return latestReplayPrompt(latestPrompt, attachments, fallback)
+	}
+	parts := []string{
+		"Continue the conversation using the transcript below. Reply as the assistant to the final [user] message only. Do not mention or repeat the role labels in your reply.",
+		cleanPrevious,
+	}
+	if cleanLatest := latestReplayPrompt(latestPrompt, attachments, ""); cleanLatest != "" {
+		parts = append(parts, formatPromptSection("user", cleanLatest))
+	}
+	if prompt := strings.TrimSpace(strings.Join(parts, "\n\n")); prompt != "" {
+		return prompt
+	}
+	return latestReplayPrompt(latestPrompt, attachments, fallback)
 }
 
 func setConversationIDHeader(w http.ResponseWriter, conversationID string) {
@@ -839,7 +903,7 @@ func (a *App) resolveContinuationConversation(r *http.Request, payload map[strin
 }
 
 func (a *App) startConversationTurn(existingConversationID string, preferredConversationID string, source string, transport string, displayPrompt string, request PromptRunRequest) string {
-	if existingConversationID != "" && strings.TrimSpace(request.UpstreamThreadID) != "" {
+	if existingConversationID != "" && (strings.TrimSpace(request.UpstreamThreadID) != "" || request.ForceLocalConversationContinue) {
 		if conversationID, err := a.continueConversation(existingConversationID, source, transport, displayPrompt, request); err == nil {
 			return conversationID
 		}
@@ -990,24 +1054,22 @@ func (a *App) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		SessionFingerprint: originalFingerprint,
 		RawMessageCount:    originalRawMessageCount,
 	}
-	forceNewConversation := shouldForceNewConversation(cfg)
-	preferredConversationID := ""
-	if !forceNewConversation {
-		preferredConversationID = requestedConversationID(r, payload)
-	}
+	freshThreadMode := forceFreshThreadPerRequest(cfg)
+	preferredConversationID := requestedConversationID(r, payload)
 	conversation := ConversationEntry{}
-	if !forceNewConversation {
-		if matched, ok := a.resolveContinuationConversation(r, payload, "", hiddenPrompt, normalized.Segments); ok {
-			conversation = matched.Conversation
+	if matched, ok := a.resolveContinuationConversation(r, payload, "", hiddenPrompt, normalized.Segments); ok {
+		conversation = matched.Conversation
+		request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
+		if freshThreadMode {
+			request.ForceLocalConversationContinue = strings.TrimSpace(conversation.ID) != ""
+			request.Prompt = buildFreshThreadReplayPromptFromConversation(conversation, latestPrompt, normalized.Attachments, promptText)
+		} else {
 			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
-			request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
 			request.continuationDraft = buildContinuationDraft(matched.Session)
 			if matched.Session != nil && (request.RawMessageCount == matched.Session.Session.RawMessageCount || request.ForceSessionRepeatTurn) {
 				request.SessionRepeatTurn = true
 			}
 			request.Prompt = latestPrompt
-		} else {
-			request.PinnedAccountEmail = requestedAccountEmail(r, payload)
 		}
 	} else {
 		request.PinnedAccountEmail = requestedAccountEmail(r, payload)
@@ -1084,19 +1146,19 @@ func (a *App) handleSillyTavernChatCompletionsPayload(w http.ResponseWriter, r *
 		request.StreamReasoningWarmup = true
 	}
 	a.markEphemeralConversationRequest(&request)
+	freshThreadMode := forceFreshThreadPerRequest(cfg)
 
-	forceNewConversation := shouldForceNewConversation(cfg)
-	preferredConversationID := ""
-	if !forceNewConversation {
-		preferredConversationID = requestedConversationID(r, payload)
-	}
+	preferredConversationID := requestedConversationID(r, payload)
 	conversation := ConversationEntry{}
-	if !forceNewConversation {
-		if matched, ok := a.resolveSillyTavernContinuation(r, payload, ctx); ok {
-			request.SuppressUpstreamThreadPersistence = matched.SuppressPersist
-			conversation = matched.Target.Conversation
+	if matched, ok := a.resolveSillyTavernContinuation(r, payload, ctx); ok {
+		request.SuppressUpstreamThreadPersistence = matched.SuppressPersist
+		conversation = matched.Target.Conversation
+		request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
+		if freshThreadMode {
+			request.ForceLocalConversationContinue = strings.TrimSpace(conversation.ID) != ""
+			request.Prompt = buildFreshThreadReplayPromptFromConversation(conversation, ctx.LatestPrompt, ctx.Normalized.Attachments, request.Prompt)
+		} else {
 			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
-			request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
 			request.continuationDraft = buildContinuationDraft(matched.Target.Session)
 			request.ForceSessionRepeatTurn = matched.ForceRepeatTurn
 			if request.UpstreamThreadID != "" {
@@ -1105,12 +1167,6 @@ func (a *App) handleSillyTavernChatCompletionsPayload(w http.ResponseWriter, r *
 				} else {
 					request.Prompt = ctx.LatestPrompt
 				}
-			}
-		} else {
-			request.PinnedAccountEmail = requestedAccountEmail(r, payload)
-			preferActiveAccountForRequest(cfg, &request)
-			if ctx.Mode == sillyTavernModeQuiet || ctx.Mode == sillyTavernModeImpersona {
-				request.SuppressUpstreamThreadPersistence = true
 			}
 		}
 	} else {
@@ -1160,13 +1216,9 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, _, registry := a.State.Snapshot()
-	forceNewConversation := shouldForceNewConversation(cfg)
 	stream, _ := payload["stream"].(bool)
 	var previousResponse map[string]any
-	previousResponseID := ""
-	if !forceNewConversation {
-		previousResponseID = strings.TrimSpace(stringValue(payload["previous_response_id"]))
-	}
+	previousResponseID := strings.TrimSpace(stringValue(payload["previous_response_id"]))
 	if previousResponseID != "" {
 		var ok bool
 		previousResponse, ok = a.State.getResponse(previousResponseID)
@@ -1205,26 +1257,28 @@ func (a *App) handleResponses(w http.ResponseWriter, r *http.Request) {
 		SessionFingerprint: originalFingerprint,
 		RawMessageCount:    originalRawMessageCount,
 	}
-	preferredConversationID := ""
-	if !forceNewConversation {
-		preferredConversationID = requestedConversationID(r, payload)
-	}
+	freshThreadMode := forceFreshThreadPerRequest(cfg)
+	preferredConversationID := requestedConversationID(r, payload)
 	conversation := ConversationEntry{}
-	if !forceNewConversation {
-		if matched, ok := a.resolveContinuationConversation(r, payload, previousResponseID, hiddenPrompt, normalized.Segments); ok {
-			conversation = matched.Conversation
+	if matched, ok := a.resolveContinuationConversation(r, payload, previousResponseID, hiddenPrompt, normalized.Segments); ok {
+		conversation = matched.Conversation
+		request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
+		if freshThreadMode {
+			request.ForceLocalConversationContinue = strings.TrimSpace(conversation.ID) != ""
+			request.Prompt = buildFreshThreadReplayPromptFromConversation(conversation, latestPrompt, normalized.Attachments, promptText)
+		} else {
 			request.UpstreamThreadID = strings.TrimSpace(conversation.ThreadID)
-			request.PinnedAccountEmail = firstNonEmpty(strings.TrimSpace(conversation.AccountEmail), requestedAccountEmail(r, payload))
 			request.continuationDraft = buildContinuationDraft(matched.Session)
 			if matched.Session != nil && (request.RawMessageCount == matched.Session.Session.RawMessageCount || request.ForceSessionRepeatTurn) {
 				request.SessionRepeatTurn = true
 			}
 			request.Prompt = latestPrompt
-		} else {
-			request.PinnedAccountEmail = requestedAccountEmail(r, payload)
 		}
 	} else {
 		request.PinnedAccountEmail = requestedAccountEmail(r, payload)
+	}
+	if freshThreadMode && strings.TrimSpace(conversation.ID) == "" {
+		request.Prompt = buildFreshThreadReplayPromptFromStoredResponse(normalized.PreviousResponsePrompt, latestPrompt, normalized.Attachments, request.Prompt)
 	}
 	request.ConversationID = firstNonEmpty(strings.TrimSpace(conversation.ID), preferredConversationID)
 	conversationID := a.startConversationTurn(conversation.ID, preferredConversationID, "api", "responses", resolveRequestPromptForContinuation(normalized), request)

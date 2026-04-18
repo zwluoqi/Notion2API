@@ -191,6 +191,7 @@ type PromptRunRequest struct {
 	EphemeralConversation             bool
 	EphemeralReason                   string
 	EphemeralDeleteAfter              time.Time
+	ForceLocalConversationContinue    bool
 	SessionRepeatTurn                 bool
 	ForceSessionRepeatTurn            bool
 	attachmentThreadReady             bool
